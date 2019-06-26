@@ -1,0 +1,199 @@
+---
+title: "Summarize Projections"
+author: "Dan Warren"
+date: "25 May 2016"
+output: html_document
+---
+
+
+
+```{r}
+setwd("~/GitHub/SDM-Sim/logistic sims/")
+library(ggplot2)
+library(dplyr)
+
+sims.table <- read.csv("./detail.table.csv")
+
+sims.table$true.change.all	<- rep(NA, nrow(sims.table))
+sims.table$pred.change.all		<- rep(NA, nrow(sims.table))
+sims.table$pred.error.all		<- rep(NA, nrow(sims.table))
+sims.table$pred.cor.all		<- rep(NA, nrow(sims.table))
+sims.table$true.change.occ		<- rep(NA, nrow(sims.table))
+sims.table$pred.change.occ		<- rep(NA, nrow(sims.table))
+sims.table$pred.error.occ		<- rep(NA, nrow(sims.table))
+sims.table$pred.cor.occ		<- rep(NA, nrow(sims.table))
+sims.table$true.cells.declining.all		<- rep(NA, nrow(sims.table))
+sims.table$pred.cells.declining.all		<- rep(NA, nrow(sims.table))
+sims.table$prop.agreed.declining.all		<- rep(NA, nrow(sims.table))
+sims.table$true.cells.declining.occ		<- rep(NA, nrow(sims.table))
+sims.table$pred.cells.declining.occ		<- rep(NA, nrow(sims.table))
+sims.table$prop.agreed.declining.occ	<- rep(NA, nrow(sims.table))
+sims.table$spearman.occ	<- rep(NA, nrow(sims.table))
+sims.table$spearman.all	<- rep(NA, nrow(sims.table))
+
+for(i in 1:nrow(sims.table)){
+  this.infile <- paste0("./", sims.table[i,"sim"], "/", sims.table[i, "sim"], ".projection.summary.csv")
+  if(file.exists(this.infile)){
+    print(paste("Found", this.infile))
+    this.proj <- read.csv(this.infile)
+    method <- strsplit(as.character(this.proj$model), split = "\\.")
+    if(sims.table[i, "bias.strength"] == 0 | sims.table[i, "bias.strength"] == 1){
+      method <- unlist(lapply(method, function(x) x[3]))
+    } else {
+      method <- unlist(lapply(method, function(x) x[5]))
+    }
+    this.proj$method <- method
+    print(sims.table[i,"method"])
+    sims.table[i,"true.change.all"] <- mean(this.proj[this.proj$method == sims.table[i,"method"],"true.change.all"], na.rm=TRUE)
+    sims.table[i,"pred.change.all"]	<- mean(this.proj[this.proj$method == sims.table[i,"method"],"pred.change.all"], na.rm=TRUE)
+    sims.table[i,"pred.error.all"]	<- mean(this.proj[this.proj$method == sims.table[i,"method"],"pred.error.all"], na.rm=TRUE)
+    sims.table[i,"pred.cor.all"]	<- mean(this.proj[this.proj$method == sims.table[i,"method"],"pred.cor.all"], na.rm=TRUE)
+    sims.table[i,"true.change.occ"]	<- mean(this.proj[this.proj$method == sims.table[i,"method"],"true.change.occ"], na.rm=TRUE)
+    sims.table[i,"pred.change.occ"]	<- mean(this.proj[this.proj$method == sims.table[i,"method"],"pred.change.occ"], na.rm=TRUE)
+    sims.table[i,"pred.error.occ"]	<- mean(this.proj[this.proj$method == sims.table[i,"method"],"pred.error.occ"], na.rm=TRUE)
+    sims.table[i,"pred.cor.occ"]	<- mean(this.proj[this.proj$method == sims.table[i,"method"],"pred.cor.occ"], na.rm=TRUE)
+    sims.table[i,"true.cells.declining.all"]	<- mean(this.proj[this.proj$method == sims.table[i,"method"],"true.cells.declining.all"], na.rm=TRUE)
+    sims.table[i,"pred.cells.declining.all"]	<- mean(this.proj[this.proj$method == sims.table[i,"method"],"pred.cells.declining.all"], na.rm=TRUE)
+    sims.table[i,"prop.agreed.declining.all"]	<- mean(this.proj[this.proj$method == sims.table[i,"method"],"prop.agreed.declining.all"], na.rm=TRUE)
+    sims.table[i,"true.cells.declining.occ"]	<- mean(this.proj[this.proj$method == sims.table[i,"method"],"true.cells.declining.occ"], na.rm=TRUE)
+    sims.table[i,"pred.cells.declining.occ"]	<- mean(this.proj[this.proj$method == sims.table[i,"method"],"pred.cells.declining.occ"], na.rm=TRUE)
+    sims.table[i,"prop.agreed.declining.occ"]<- mean(this.proj[this.proj$method == sims.table[i,"method"],"prop.agreed.declining.occ"], na.rm=TRUE)
+    sims.table[i,"spearman.occ"]<- mean(this.proj[this.proj$method == sims.table[i,"method"],"spearman.occ"], na.rm=TRUE)
+    sims.table[i,"spearman.all"]<- mean(this.proj[this.proj$method == sims.table[i,"method"],"spearman.all"], na.rm=TRUE)
+  }
+}
+
+# This function takes a table and a formula and runs LMs for each method using that formula
+lm.methods <- function(table, this.formula){
+  model.table <- data.frame(coef = rep(NA, length(levels(table$method))),
+                            p = rep(NA, length(levels(table$method))),
+                            r.sq = rep(NA, length(levels(table$method))))
+  
+  row.names(model.table) <- as.character(levels(table$method))
+  for(i in levels(table$method)){
+    this.model <- summary(lm(this.formula, data = table[table$method == i,]))
+    model.table[i,] <- c(this.model$coefficients[2,1], this.model$coefficients[2,4], this.model$r.squared)
+  }
+  return(model.table)
+}
+
+
+
+
+
+qplot(test.auc, spearman.occ, data = sims.table, color = method)
+this.glm <- glm(spearman.occ ~ test.auc, data = sims.table)
+summary(this.glm)
+print(paste("McFadden pseudo-rsq:", 1 - this.glm$deviance/this.glm$null.deviance))
+lm.methods(sims.table, formula(spearman.occ ~ test.auc))
+
+qplot(test.auc, spearman.all, data = sims.table, color = method)
+this.glm <- glm(spearman.all ~ test.auc, data = sims.table)
+summary(this.glm)
+print(paste("McFadden pseudo-rsq:", 1 - this.glm$deviance/this.glm$null.deviance))
+lm.methods(sims.table, formula(spearman.all ~ test.auc))
+
+qplot(test.max.tss, spearman.occ, data = sims.table, color = method)
+this.glm <- glm(spearman.occ ~ test.max.tss, data = sims.table)
+summary(this.glm)
+print(paste("McFadden pseudo-rsq:", 1 - this.glm$deviance/this.glm$null.deviance))
+lm.methods(sims.table, formula(spearman.occ ~ test.max.tss))
+
+qplot(test.max.tss, spearman.all, data = sims.table, color = method)
+this.glm <- glm(spearman.all ~ test.max.tss, data = sims.table)
+summary(this.glm)
+print(paste("McFadden pseudo-rsq:", 1 - this.glm$deviance/this.glm$null.deviance))
+lm.methods(sims.table, formula(spearman.all ~ test.max.tss))
+
+qplot(test.max.kappa, spearman.occ, data = sims.table, color = method)
+this.glm <- glm(spearman.occ ~ test.max.kappa, data = sims.table)
+summary(this.glm)
+print(paste("McFadden pseudo-rsq:", 1 - this.glm$deviance/this.glm$null.deviance))
+lm.methods(sims.table, formula(spearman.occ ~ test.max.kappa))
+
+qplot(test.max.kappa, spearman.all, data = sims.table, color = method)
+this.glm <- glm(spearman.all ~ test.max.kappa, data = sims.table)
+summary(this.glm)
+print(paste("McFadden pseudo-rsq:", 1 - this.glm$deviance/this.glm$null.deviance))
+lm.methods(sims.table, formula(spearman.all ~ test.max.kappa))
+
+
+qplot(test.auc, pred.cor.all, data = sims.table, color = method)
+summary(glm(pred.cor.all ~ test.auc, data = sims.table))
+lm.methods(sims.table, formula(pred.cor.all ~ test.auc))
+
+qplot(test.auc, pred.cor.occ, data = sims.table, color = method)
+summary(glm(pred.cor.occ ~ test.auc, data = sims.table))
+lm.methods(sims.table, formula(pred.cor.occ ~ test.auc))
+
+qplot(test.max.kappa, pred.cor.all, data = sims.table, color = method)
+summary(glm(pred.cor.all ~ test.max.kappa, data = sims.table))
+lm.methods(sims.table, formula(pred.cor.all ~ test.max.kappa))
+
+qplot(test.max.kappa, pred.cor.occ, data = sims.table, color = method)
+summary(glm(pred.cor.occ ~ test.max.kappa, data = sims.table))
+lm.methods(sims.table, formula(pred.cor.occ ~ test.max.kappa))
+
+qplot(test.max.tss, pred.cor.all, data = sims.table, color = method)
+summary(glm(pred.cor.all ~ test.max.tss, data = sims.table))
+lm.methods(sims.table, formula(pred.cor.all ~ test.max.tss))
+
+qplot(test.max.tss, pred.cor.occ, data = sims.table, color = method)
+summary(glm(pred.cor.occ ~ test.max.tss, data = sims.table))
+lm.methods(sims.table, formula(pred.cor.occ ~ test.max.tss))
+
+qplot(cor.all.spearman, pred.cor.all, data = sims.table, color = method)
+summary(glm(pred.cor.all ~ cor.all.spearman, data = sims.table))
+lm.methods(sims.table, formula(pred.cor.all ~ cor.all.spearman))
+
+qplot(cor.native.spearman, pred.cor.occ, data = sims.table, color = method)
+summary(glm(pred.cor.occ ~ cor.native.spearman, data = sims.table))
+lm.methods(sims.table, formula(pred.cor.occ ~ cor.native.spearman))
+
+length(which(sims.table$pred.cor.all > 0))/nrow(sims.table)
+
+length(which(sims.table$pred.cor.occ > 0))/nrow(sims.table)
+
+qplot(pred.error.occ, data = sims.table, fill = method, geom = "density", alpha = 0.5) + geom_vline(xintercept = 0)
+summary(aov(pred.error.occ ~ method, data = sims.table))
+
+qplot(pred.error.all, data = sims.table, fill = method, geom = "density", alpha = 0.5) + geom_vline(xintercept = 0)
+summary(aov(pred.error.all ~ method, data = sims.table))
+
+qplot(prop.agreed.declining.all, data = sims.table, fill = method, geom = "density", alpha = 0.5) + geom_vline(xintercept = 0)
+summary(aov(prop.agreed.declining.all ~ method, data = sims.table))
+
+qplot(prop.agreed.declining.occ, data = sims.table, fill = method, geom = "density", alpha = 0.5) + geom_vline(xintercept = 0)
+summary(aov(prop.agreed.declining.occ ~ method, data = sims.table))
+
+qplot(test.auc, prop.agreed.declining.all, data = sims.table, color = method) 
+summary(glm(prop.agreed.declining.all ~ test.auc, data = sims.table))
+
+qplot(test.auc, prop.agreed.declining.occ, data = sims.table, color = method) 
+summary(glm(prop.agreed.declining.occ ~ test.auc, data = sims.table))
+
+qplot(pred.change.occ, data = sims.table, fill = method, geom = "density", alpha = 0.5) + geom_vline(xintercept = 0)
+
+qplot(pred.change.all, data = sims.table, fill = method, geom = "density", alpha = 0.5) + geom_vline(xintercept = 0)
+
+qplot(pred.cells.declining.occ, data = sims.table, fill = method, geom = "density", alpha = 0.5) + geom_vline(xintercept = 0)
+
+qplot(pred.cells.declining.all, data = sims.table, fill = method, geom = "density", alpha = 0.5) + geom_vline(xintercept = 0)
+
+qplot(pred.cor.all, pred.error.all, data = sims.table, color = method)
+
+qplot(pred.cor.occ, pred.error.occ, data = sims.table, color = method)
+summary(glm(pred.error.occ ~ pred.cor.occ, data = sims.table))
+
+qplot(test.auc, pred.error.occ, data = sims.table)
+summary(glm(pred.error.occ ~ test.auc, data = sims.table))
+
+qplot(test.auc, pred.error.all, data = sims.table)
+summary(glm(pred.error.all ~ test.auc, data = sims.table))
+
+sims.table[,c(2,7:ncol(sims.table))] %>% 
+  group_by(method) %>% 
+  summarise_each(funs(mean(., na.rm=TRUE))) %>%
+  write.csv(file = "projection summary table.csv")
+
+```

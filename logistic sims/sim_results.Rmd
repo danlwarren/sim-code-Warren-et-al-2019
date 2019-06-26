@@ -1,0 +1,842 @@
+---
+title: "ENM Sim Results"
+author: "Dan Warren"
+date: "9 May 2016"
+output: html_document
+---
+
+Simulation results for a study of the relationship between predicting species distributions and the suitability of habitat.
+
+
+Loading in data...some sims are skipped because they didn't produce viable distributions to sample from.  
+```{r warning = FALSE, echo = FALSE, message = FALSE}
+setwd("~/GitHub/SDM-sim/logistic sims/")
+library(ggplot2)
+library(plyr)
+library(scatterplot3d)
+library(virtualspecies)
+library(knitr)
+
+sims <- list.dirs()
+
+# Get rid of "."
+sims <- sims[-1]
+
+continue <- FALSE
+while(continue == FALSE){
+  this.file <- paste0(sims[1], sub(".", "", sims[1]), ".summary.csv")
+  if(file.exists(this.file)){
+    continue <- TRUE
+  } else {
+    print(paste("Skipping", sims[1]))
+    sims <- sims[-1] 
+  }
+}
+
+out.table <- read.csv(paste0(sims[1], sub(".", "", sims[1]), ".summary.csv"))
+simname <- gsub(pattern = "\\.\\/", "", sims[1])
+out.table$sim <- simname
+load(paste0(sims[1], "/", simname, ".virtualspecies.Rda"))
+out.table$true.breadth <- sum(getValues(this.species$pa.raster), na.rm=TRUE)
+
+
+for(i in 2:length(sims)){
+  print(sims[i])
+  summary <-paste0(sims[i], sub(".", "", sims[i]), ".summary.csv")
+  if(file.exists(summary)){
+    this.summary <- read.csv(summary)
+    
+    simname <- gsub(pattern = "\\.\\/", "", sims[i])
+    this.summary$sim <- simname
+    load(paste0(sims[i], "/", simname, ".virtualspecies.Rda"))
+    this.summary$true.breadth <- sum(getValues(this.species$pa.raster), na.rm=TRUE)
+    if(ncol(this.summary) == ncol(out.table)){
+      out.table <- rbind(out.table, this.summary)
+    } else {
+      print(paste("skipping", sims[i]))
+    }
+    
+  } else {
+    print(paste("skipping", sims[i]))
+  }
+  
+}
+
+rownames(out.table) <- NULL
+out.table <- as.data.frame(out.table)
+new.table <- unique(out.table[,c(1,2,3,6,7)])
+stats <- levels(out.table$statistic)
+
+for(i in stats){
+  this.stat <- out.table[out.table$statistic == i,-which(colnames(out.table) == "statistic")]
+  new.table <- merge(new.table, this.stat, by = c("method", "bias.strength", "occupancy", "sim", "true.breadth"))  
+  colnames(new.table)[ncol(new.table)] <- i
+}
+
+new.table <- new.table[complete.cases(new.table),]
+
+# Try this out to make sure we're not being thrown by species with very little suitable habitat
+# new.table <- new.table[new.table$true.breadth > 400,]
+# new.table <- new.table[new.table$occupancy > 0.1,]
+
+summary.table <- ddply(new.table, ~method, summarise, 
+                       cor.all.spearman = mean(cor.all.spearman),
+                       cor.native.spearman = mean(cor.native.spearman),
+                       cor.all.pearson = mean(cor.all.pearson),
+                       cor.native.pearson = mean(cor.native.pearson),
+                       cor.all.hoslem = mean(cor.all.hoslem),
+                       cor.native.hoslem = mean(cor.native.hoslem),
+                       train.auc = mean(train.auc),
+                       test.auc = mean(test.auc),
+                       train.max.tss = mean(train.max.tss),
+                       test.max.tss = mean(test.max.tss),
+                       train.max.kappa = mean(train.max.kappa),
+                       test.max.kappa = mean(test.max.kappa)
+)
+
+
+# This function takes a table and a formula and runs LMs for each method using that formula
+lm.methods <- function(table, this.formula){
+  model.table <- data.frame(coef = rep(NA, length(levels(table$method))),
+                            p = rep(NA, length(levels(table$method))),
+                            r.sq = rep(NA, length(levels(table$method))))
+  
+  row.names(model.table) <- as.character(levels(table$method))
+  for(i in levels(table$method)){
+    this.model <- summary(lm(this.formula, data = table[table$method == i,]))
+    model.table[i,] <- c(this.model$coefficients[2,1], this.model$coefficients[2,4], this.model$r.squared)
+  }
+  return(model.table)
+}
+
+
+```
+
+
+# Summary statistics
+```{r warning = FALSE, echo = FALSE, message = FALSE}
+kable(summary.table)
+```
+
+
+<br>
+<br>
+<br>
+<br>
+
+### Relationship between training and test AUC
+
+This plot illustrates the relationship between a model's ability to predict the data that was used to construct that model vs. its ability to predict a random subset of data that was witheld from the model during fitting.  This basically shows what you'd expect, and what you'd hope would be true: that a model that predicts its training data well is generally better at predicting the randomly withheld test data.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(train.auc, test.auc, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(test.auc ~ train.auc,  data = new.table)))
+
+kable(lm.methods(new.table, formula(train.auc ~ test.auc)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+# Performance of models
+
+## Spearman
+
+Examining performance of models using Spearman correlation coefficient
+
+```{r warning = FALSE, echo = FALSE}
+print(paste("Proportion of models positively correlated with true habitat suitability, native range, Spearman rank correlation: ",
+            nrow(new.table[new.table$cor.native.spearman > 0,])/nrow(new.table)))
+print(paste("Proportion of models positively correlated with true habitat suitability, continental scale, Spearman rank correlation: ",
+            nrow(new.table[new.table$cor.all.spearman > 0,])/nrow(new.table)))
+print(paste("Proportion of models positively correlated with true habitat suitability, both native range and continental scale, Spearman rank correlation: ",
+            nrow(new.table[new.table$cor.native.spearman > 0 & new.table$cor.all.spearman > 0,])/nrow(new.table)))
+
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between Spearman rank correlation in the training region and at the continental scale
+
+This plot and regression demonstrate the relationship between the ability to predict the relative suitability of habitat within the training region and the ability of the model to extrapolate to the continental scale.  The clustering of points around the 1:1 line is due to the set of species that occupy all suitable habitat, i.e., the training region and the continental extent are the same.  The second plot and regression have those simulations removed.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(cor.native.spearman, cor.all.spearman, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.spearman ~ cor.native.spearman,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.spearman ~ cor.native.spearman)))
+cat("\n\n\n Same plot and regression, with 1:1 simulations removed\n")
+qplot(cor.native.spearman, cor.all.spearman, data=new.table[new.table$occupancy < 1,], color = method, facets = method ~ 1)
+print(summary(lm(cor.all.spearman ~ cor.native.spearman,  data = new.table[new.table$occupancy < 1,])))
+kable(lm.methods(new.table[new.table$occupancy < 1,], formula(cor.all.spearman ~ cor.native.spearman)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Density plot of Spearman rank correlation between predicted and true habitat suitability, training region only
+
+This plot shows the distribution of Spearman rank correlations between the true relative suitability of habitat and that inferred by each model within the training region.  Colors correspond to modeling algorithms.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(cor.native.spearman, data = new.table, geom = "density", fill = method, alpha = 0.2)
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Density plot of Spearman rank correlation between predicted and true habitat suitability, continental scale
+
+This plot shows the distribution of Spearman rank correlations between the true relative suitability of habitat and that inferred by each model when models are projected to a continental scale.  Colors correspond to modeling algorithms.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(cor.all.spearman, data = new.table, geom = "density", fill = method, alpha = 0.2)
+```
+<br>
+<br>
+<br>
+<br>
+
+
+
+
+### Density plots of traditional model quality metrics 
+
+These plots show the distribution of metrics for AUC, TSS, and kappa on train and test data
+
+```{r warning = FALSE, echo = FALSE}
+qplot(train.auc, data = new.table, geom = "density", fill = method, alpha = 0.2)
+qplot(test.auc, data = new.table, geom = "density", fill = method, alpha = 0.2)
+qplot(train.max.tss, data = new.table, geom = "density", fill = method, alpha = 0.2)
+qplot(test.max.tss, data = new.table, geom = "density", fill = method, alpha = 0.2)
+qplot(train.max.kappa, data = new.table, geom = "density", fill = method, alpha = 0.2)
+qplot(test.max.kappa, data = new.table, geom = "density", fill = method, alpha = 0.2)
+```
+<br>
+<br>
+<br>
+<br>
+
+
+
+### Relationships between traditional model quality metrics 
+
+These plots show the relationships between AUC, TSS, and kappa on randomly withheld data.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(test.auc, test.max.kappa, data = new.table, color = method)
+print(summary(lm(test.max.kappa ~ test.auc,  data = new.table)))
+kable(lm.methods(new.table, formula(test.max.kappa ~ test.auc)))
+
+qplot(test.auc, test.max.tss, data = new.table, color = method)
+print(summary(lm(test.max.tss ~ test.auc,  data = new.table)))
+kable(lm.methods(new.table, formula(test.max.tss ~ test.auc)))
+
+qplot(test.max.kappa, test.max.tss, data = new.table, color = method)
+print(summary(lm(test.max.tss ~ test.max.kappa,  data = new.table)))
+kable(lm.methods(new.table, formula(test.max.tss ~ test.max.kappa)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between test AUC and Spearman rank correlation, training region only
+
+This plot depicts the relationship between AUC on randomly withheld test data and the ability of the model to estimate the relative suitability of habitat within the training region.  The lack of correlation indicates that test AUC is not a good predictor of the model's ability to estimate the relative suitability of habitat, which is very problematic.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(test.auc, cor.native.spearman, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.spearman ~ test.auc,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.native.spearman ~ test.auc)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between test AUC and Spearman rank correlation, continental scale
+
+This plot depicts the relationship between AUC on randomly withheld test data and the ability of the model to estimate the relative suitability of habitat at a continental scale, where model transferability is an issue.  The lack of correlation indicates that test AUC is not a good predictor of model transferability.  In fact the (not statistically significant) effect of test AUC on model accuracy is in fact negative.  
+
+```{r warning = FALSE, echo = FALSE}
+qplot(test.auc, cor.all.spearman, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.spearman ~ test.auc,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.spearman ~ test.auc)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between test max TSS and Spearman rank correlation
+
+These plots and models are similar to those for AUC above, but are instead calculated using the maximum value of the True Skill Statistic.  The models are NOT thresholded for this comparision (which would typically be done at the threshold value corresponding to the max value of TSS),  rather the max value is used as a quality indicator for the continuous model.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(test.max.tss, cor.native.spearman, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.spearman ~ test.max.tss, data = new.table)))
+kable(lm.methods(new.table, formula(cor.native.spearman ~ test.max.tss)))
+
+qplot(test.max.tss, cor.all.spearman, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.spearman ~ test.max.tss, data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.spearman ~ test.max.tss)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between test max kappa and Spearman rank correlation
+
+These plots and models are similar to those for AUC above, but are instead calculated using the maximum value of Cohen's kappa.  The models are NOT thresholded for this comparision (which would typically be done at the threshold value corresponding to the max value of kappa),  rather the max value is used as a quality indicator for the continuous model.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(test.max.kappa, cor.native.spearman, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.spearman ~ test.max.kappa, data = new.table)))
+kable(lm.methods(new.table, formula(cor.native.spearman ~ test.max.kappa)))
+qplot(test.max.kappa, cor.all.spearman, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.spearman ~ test.max.kappa,data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.spearman ~ test.max.kappa)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between bias strength and Spearman rank correlation, training region only
+
+This plot and model examine the relationship between the strength of spatial sampling bias and the ability to infer the relative suitability of habitat within the training region.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(bias.strength, cor.native.spearman, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.spearman ~ bias.strength,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.native.spearman ~ bias.strength)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between proportion of suitable habitat that falls within species range and Spearman rank correlation, training region only
+
+This plot and model examine the relationship between the proportion of suitable habitat continent-wide that is within the species range and the ability to infer the relative suitability of habitat within the training region.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(occupancy, cor.native.spearman, data = new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.spearman ~ occupancy,  data = new.table[new.table$method != "rf",])))
+kable(lm.methods(new.table, formula(cor.native.spearman ~ occupancy)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Rank correlation vs. bias strength and proportion of suitable habitat within range, training region only
+
+Combining the two above into a single 3D plot and joint model with interactions.
+
+```{r warning = FALSE, echo = FALSE}
+s3d <- scatterplot3d(new.table$occupancy, new.table$bias.strength, new.table$cor.native.spearman)
+my.lm <- lm(new.table$cor.native.spearman ~ new.table$bias.strength + new.table$occupancy)
+s3d$plane3d(my.lm)
+### Note to self: significant effects fall out once interaction between bias and occupancy is included
+native.lm <- lm(cor.native.spearman ~ bias.strength * occupancy,  data = new.table)
+print(summary(native.lm))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between bias strength and Spearman rank correlation, continental scale
+
+This plot and model examine the relationship between the strength of spatial sampling bias and the ability to infer the relative suitability of habitat when models are transferred to the continental scale.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(bias.strength, cor.all.spearman, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.spearman ~ bias.strength,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.spearman ~ bias.strength)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between proportion of suitable habitat that falls within species range and Spearman rank correlation, continental scale
+
+This plot and model examine the relationship between the proportion of suitable habitat continent-wide that is within the species range and the ability to infer the relative suitability of habitat when models are transferred to the continental scale.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(occupancy, cor.all.spearman, data = new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.spearman ~ occupancy,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.spearman ~ occupancy)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Rank correlation vs. bias strength and proportion of suitable habitat within range, continental scale
+
+Combining the two above into a single 3D plot and joint model with interactions.
+
+```{r warning = FALSE, echo = FALSE}
+s3d <- scatterplot3d(new.table$occupancy, new.table$bias.strength, new.table$cor.all.spearman)
+my.lm <- lm(new.table$cor.all.spearman ~ new.table$bias.strength + new.table$occupancy)
+s3d$plane3d(my.lm)
+### Note to self: significant effects fall out once interaction between bias and occupancy is included
+all.lm <- lm(cor.all.spearman ~ bias.strength * occupancy,  data = new.table)
+print(summary(all.lm))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between Spearman rank correlation and size of the species' range, training region only
+
+This plot and model examine whether the size of the species' range affects the ability to infer the relative suitability of habitat within the training region.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(true.breadth, cor.native.spearman, data = new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.spearman ~ true.breadth,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.native.spearman ~ true.breadth)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between Spearman rank correlation and size of the species' range, continental scale
+
+This plot and model examine whether the size of the species' range affects the ability to infer the relative suitability of habitat when models are transferred to the continental scale.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(true.breadth, cor.all.spearman, data = new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.spearman ~ true.breadth,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.spearman ~ true.breadth)))
+
+```
+<br>
+<br>
+<br>
+<br>
+
+
+
+
+### Relationship between test AUC and Pearson correlation, training region only
+
+This plot depicts the relationship between AUC on randomly withheld test data and the ability of the model to estimate the relative suitability of habitat within the training region.  The lack of correlation indicates that test AUC is not a good predictor of the model's ability to estimate the relative suitability of habitat, which is very problematic.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(test.auc, cor.native.pearson, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.pearson ~ test.auc,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.native.pearson ~ test.auc)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between test AUC and Pearson  correlation, continental scale
+
+This plot depicts the relationship between AUC on randomly withheld test data and the ability of the model to estimate the relative suitability of habitat at a continental scale, where model transferability is an issue.  The lack of correlation indicates that test AUC is not a good predictor of model transferability.  In fact the (not statistically significant) effect of test AUC on model accuracy is in fact negative.  
+
+```{r warning = FALSE, echo = FALSE}
+qplot(test.auc, cor.all.pearson, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.pearson ~ test.auc,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.pearson ~ test.auc)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between test max TSS and Pearson  correlation
+
+These plots and models are similar to those for AUC above, but are instead calculated using the maximum value of the True Skill Statistic.  The models are NOT thresholded for this comparision (which would typically be done at the threshold value corresponding to the max value of TSS),  rather the max value is used as a quality indicator for the continuous model.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(test.max.tss, cor.native.pearson, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.pearson ~ test.max.tss, data = new.table)))
+kable(lm.methods(new.table, formula(cor.native.pearson ~ test.max.tss)))
+
+qplot(test.max.tss, cor.all.pearson, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.pearson ~ test.max.tss, data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.pearson ~ test.max.tss)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between test max kappa and Pearson  correlation
+
+These plots and models are similar to those for AUC above, but are instead calculated using the maximum value of Cohen's kappa.  The models are NOT thresholded for this comparision (which would typically be done at the threshold value corresponding to the max value of kappa),  rather the max value is used as a quality indicator for the continuous model.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(test.max.kappa, cor.native.pearson, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.pearson ~ test.max.kappa, data = new.table)))
+kable(lm.methods(new.table, formula(cor.native.pearson ~ test.max.kappa)))
+qplot(test.max.kappa, cor.all.pearson, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.pearson ~ test.max.kappa,data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.pearson ~ test.max.kappa)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between bias strength and Pearson  correlation, training region only
+
+This plot and model examine the relationship between the strength of spatial sampling bias and the ability to infer the relative suitability of habitat within the training region.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(bias.strength, cor.native.pearson, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.pearson ~ bias.strength,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.native.pearson ~ bias.strength)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between proportion of suitable habitat that falls within species range and Pearson  correlation, training region only
+
+This plot and model examine the relationship between the proportion of suitable habitat continent-wide that is within the species range and the ability to infer the relative suitability of habitat within the training region.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(occupancy, cor.native.pearson, data = new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.pearson ~ occupancy,  data = new.table[new.table$method != "rf",])))
+kable(lm.methods(new.table, formula(cor.native.pearson ~ occupancy)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+###  correlation vs. bias strength and proportion of suitable habitat within range, training region only
+
+Combining the two above into a single 3D plot and joint model with interactions.
+
+```{r warning = FALSE, echo = FALSE}
+s3d <- scatterplot3d(new.table$occupancy, new.table$bias.strength, new.table$cor.native.pearson)
+my.lm <- lm(new.table$cor.native.pearson ~ new.table$bias.strength + new.table$occupancy)
+s3d$plane3d(my.lm)
+### Note to self: significant effects fall out once interaction between bias and occupancy is included
+native.lm <- lm(cor.native.pearson ~ bias.strength * occupancy,  data = new.table)
+print(summary(native.lm))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between bias strength and Pearson  correlation, continental scale
+
+This plot and model examine the relationship between the strength of spatial sampling bias and the ability to infer the relative suitability of habitat when models are transferred to the continental scale.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(bias.strength, cor.all.pearson, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.pearson ~ bias.strength,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.pearson ~ bias.strength)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between proportion of suitable habitat that falls within species range and Pearson  correlation, continental scale
+
+This plot and model examine the relationship between the proportion of suitable habitat continent-wide that is within the species range and the ability to infer the relative suitability of habitat when models are transferred to the continental scale.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(occupancy, cor.all.pearson, data = new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.pearson ~ occupancy,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.pearson ~ occupancy)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+###  correlation vs. bias strength and proportion of suitable habitat within range, continental scale
+
+Combining the two above into a single 3D plot and joint model with interactions.
+
+```{r warning = FALSE, echo = FALSE}
+s3d <- scatterplot3d(new.table$occupancy, new.table$bias.strength, new.table$cor.all.pearson)
+my.lm <- lm(new.table$cor.all.pearson ~ new.table$bias.strength + new.table$occupancy)
+s3d$plane3d(my.lm)
+### Note to self: significant effects fall out once interaction between bias and occupancy is included
+all.lm <- lm(cor.all.pearson ~ bias.strength * occupancy,  data = new.table)
+print(summary(all.lm))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between Pearson  correlation and size of the species' range, training region only
+
+This plot and model examine whether the size of the species' range affects the ability to infer the relative suitability of habitat within the training region.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(true.breadth, cor.native.pearson, data = new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.pearson ~ true.breadth,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.native.pearson ~ true.breadth)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between Pearson  correlation and size of the species' range, continental scale
+
+This plot and model examine whether the size of the species' range affects the ability to infer the relative suitability of habitat when models are transferred to the continental scale.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(true.breadth, cor.all.pearson, data = new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.pearson ~ true.breadth,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.pearson ~ true.breadth)))
+
+```
+<br>
+<br>
+<br>
+<br>
+
+
+
+
+### Relationship between test AUC and Hosmer-Lemeshow chisq statistic, training region only
+
+This plot depicts the relationship between AUC on randomly withheld test data and the ability of the model to estimate the relative suitability of habitat within the training region.  The lack of correlation indicates that test AUC is not a good predictor of the model's ability to estimate the relative suitability of habitat, which is very problematic.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(test.auc, cor.native.hoslem, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.hoslem ~ test.auc,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.native.hoslem ~ test.auc)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between test AUC and Hosmer-Lemeshow chisq statistic, continental scale
+
+This plot depicts the relationship between AUC on randomly withheld test data and the ability of the model to estimate the relative suitability of habitat at a continental scale, where model transferability is an issue.  The lack of correlation indicates that test AUC is not a good predictor of model transferability.  In fact the (not statistically significant) effect of test AUC on model accuracy is in fact negative.  
+
+```{r warning = FALSE, echo = FALSE}
+qplot(test.auc, cor.all.hoslem, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.hoslem ~ test.auc,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.hoslem ~ test.auc)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between test max TSS and Hosmer-Lemeshow chisq statistic
+
+These plots and models are similar to those for AUC above, but are instead calculated using the maximum value of the True Skill Statistic.  The models are NOT thresholded for this comparision (which would typically be done at the threshold value corresponding to the max value of TSS),  rather the max value is used as a quality indicator for the continuous model.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(test.max.tss, cor.native.hoslem, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.hoslem ~ test.max.tss, data = new.table)))
+kable(lm.methods(new.table, formula(cor.native.hoslem ~ test.max.tss)))
+
+qplot(test.max.tss, cor.all.hoslem, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.hoslem ~ test.max.tss, data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.hoslem ~ test.max.tss)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between test max kappa and Hosmer-Lemeshow chisq statistic
+
+These plots and models are similar to those for AUC above, but are instead calculated using the maximum value of Cohen's kappa.  The models are NOT thresholded for this comparision (which would typically be done at the threshold value corresponding to the max value of kappa),  rather the max value is used as a quality indicator for the continuous model.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(test.max.kappa, cor.native.hoslem, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.hoslem ~ test.max.kappa, data = new.table)))
+kable(lm.methods(new.table, formula(cor.native.hoslem ~ test.max.kappa)))
+qplot(test.max.kappa, cor.all.hoslem, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.hoslem ~ test.max.kappa,data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.hoslem ~ test.max.kappa)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between bias strength and Hosmer-Lemeshow chisq statistic, training region only
+
+This plot and model examine the relationship between the strength of spatial sampling bias and the ability to infer the relative suitability of habitat within the training region.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(bias.strength, cor.native.hoslem, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.hoslem ~ bias.strength,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.native.hoslem ~ bias.strength)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between proportion of suitable habitat that falls within species range and Hosmer-Lemeshow chisq statistic, training region only
+
+This plot and model examine the relationship between the proportion of suitable habitat continent-wide that is within the species range and the ability to infer the relative suitability of habitat within the training region.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(occupancy, cor.native.hoslem, data = new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.hoslem ~ occupancy,  data = new.table[new.table$method != "rf",])))
+kable(lm.methods(new.table, formula(cor.native.hoslem ~ occupancy)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### chisq statistic vs. bias strength and proportion of suitable habitat within range, training region only
+
+Combining the two above into a single 3D plot and joint model with interactions.
+
+```{r warning = FALSE, echo = FALSE}
+s3d <- scatterplot3d(new.table$occupancy, new.table$bias.strength, new.table$cor.native.hoslem)
+my.lm <- lm(new.table$cor.native.hoslem ~ new.table$bias.strength + new.table$occupancy)
+s3d$plane3d(my.lm)
+### Note to self: significant effects fall out once interaction between bias and occupancy is included
+native.lm <- lm(cor.native.hoslem ~ bias.strength * occupancy,  data = new.table)
+print(summary(native.lm))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between bias strength and Hosmer-Lemeshow chisq statistic, continental scale
+
+This plot and model examine the relationship between the strength of spatial sampling bias and the ability to infer the relative suitability of habitat when models are transferred to the continental scale.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(bias.strength, cor.all.hoslem, data=new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.hoslem ~ bias.strength,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.hoslem ~ bias.strength)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between proportion of suitable habitat that falls within species range and Hosmer-Lemeshow chisq statistic, continental scale
+
+This plot and model examine the relationship between the proportion of suitable habitat continent-wide that is within the species range and the ability to infer the relative suitability of habitat when models are transferred to the continental scale.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(occupancy, cor.all.hoslem, data = new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.hoslem ~ occupancy,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.hoslem ~ occupancy)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### chisq statistic vs. bias strength and proportion of suitable habitat within range, continental scale
+
+Combining the two above into a single 3D plot and joint model with interactions.
+
+```{r warning = FALSE, echo = FALSE}
+s3d <- scatterplot3d(new.table$occupancy, new.table$bias.strength, new.table$cor.all.hoslem)
+my.lm <- lm(new.table$cor.all.hoslem ~ new.table$bias.strength + new.table$occupancy)
+s3d$plane3d(my.lm)
+### Note to self: significant effects fall out once interaction between bias and occupancy is included
+all.lm <- lm(cor.all.hoslem ~ bias.strength * occupancy,  data = new.table)
+print(summary(all.lm))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between Hosmer-Lemeshow chisq statistic and size of the species' range, training region only
+
+This plot and model examine whether the size of the species' range affects the ability to infer the relative suitability of habitat within the training region.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(true.breadth, cor.native.hoslem, data = new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.native.hoslem ~ true.breadth,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.native.hoslem ~ true.breadth)))
+```
+<br>
+<br>
+<br>
+<br>
+
+
+### Relationship between Hosmer-Lemeshow chisq statistic and size of the species' range, continental scale
+
+This plot and model examine whether the size of the species' range affects the ability to infer the relative suitability of habitat when models are transferred to the continental scale.
+
+```{r warning = FALSE, echo = FALSE}
+qplot(true.breadth, cor.all.hoslem, data = new.table, color = method, facets = method ~ 1)
+print(summary(lm(cor.all.hoslem ~ true.breadth,  data = new.table)))
+kable(lm.methods(new.table, formula(cor.all.hoslem ~ true.breadth)))
+
+```
+<br>
+<br>
+<br>
+<br>
+
+
+```{r warning = FALSE, echo = FALSE}
+write.csv(summary.table, "summary.table.csv")
+write.csv(new.table, "detail.table.csv")
+```

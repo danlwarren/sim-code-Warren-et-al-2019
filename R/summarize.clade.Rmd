@@ -1,0 +1,34 @@
+---
+title: "summarize.clade.Rmd"
+author: "Dan Warren"
+date: "January 29, 2016"
+output: pdf_document
+---
+Clade Summary
+=================================
+```{r warning=FALSE, echo=FALSE, fig.width=17, fig.height=17}
+par(cex=1.5)
+plot(clade[["tree"]])
+```
+
+```{r warning=FALSE, echo=FALSE, fig.width=17, fig.height=17}
+library(raster)
+library(virtualspecies)
+aus <- readRDS('~/GitHub/SDM-Sim/AUS_adm0.rds') 
+aus <- gSimplify(aus, tol=.01)
+plot(aus)
+for(i in 1:length(clade$species)){
+   this.sp <- clade$species[[i]]
+   points(this.sp$presence.points, col=rainbow(length(clade$species))[i], pch=16)
+}
+
+for(i in clade$species){
+   print(i$species.name)
+   print(i$virtualspecies)
+   par(cex = 1.5)
+   plotResponse(i$virtualspecies, cex=1.5)
+   par(mfrow=c(1,1), cex = 1.5)
+   print(i, print.tables=FALSE)
+   points(i$presence.points)
+}
+```

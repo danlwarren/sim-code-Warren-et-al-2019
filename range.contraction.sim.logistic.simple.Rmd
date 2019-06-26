@@ -1,0 +1,809 @@
+---
+title: "range.contraction.sim"
+author: "Dan Warren"
+date: "15 April 2016"
+output: html_document
+---
+
+# Simulation:   `r outfile`
+
+## Generating a random species
+```{r}
+this.species <- NULL
+maxsuit <- NULL
+nsuit <- NULL
+species.split <- NULL
+range.raster <- NULL
+sample.raster <- NULL
+prob.raster <- NULL
+freqtable <- NULL
+occupancy <- NULL
+pointdata <- NULL
+bgdata <- NULL
+this.glm <- NULL
+this.gam <- NULL
+this.bc <- NULL
+this.dm <- NULL
+this.mx <- NULL
+this.brt <- NULL
+this.rf <- NULL
+predglm <- NULL
+predgam <- NULL
+predbc <- NULL
+preddm <- NULL
+predmx <- NULL
+predbrt <- NULL
+predrf <- NULL
+out.table <- NULL
+group <- NULL
+this.stack <- NULL
+cor.native.spearman <- NULL
+true.over <- NULL
+pred.over <- NULL
+these.vars <- NULL
+
+print(Sys.time())
+nsuit <- 0
+while(nsuit < 50){
+  these.vars <- sample(names(env), nvars + 2)
+  this.species <- generateRandomSp(stack(env[[these.vars[1:nvars]]]), plot=FALSE, beta = 0.5)
+  
+  if(allopatry == TRUE){
+    this.pa <- convertToPA(this.species, PA.method = "threshold", beta = 0.5, plot=FALSE)
+    if(sum(getValues(this.pa$pa.raster), na.rm=TRUE) > 100){
+      species.split <- clusterdist(this.pa, 
+                                 maxclust = 10, raster.template = this.species$suitab.raster, plotty = FALSE)  
+    } else {
+      next
+    }
+    
+  } else {
+    print("Skipping this bit, allopatry set to FALSE")
+    species.split <- this.species$suitab.raster
+  }
+  
+  if(allopatry == TRUE){
+    range.raster <- species.split
+    range.raster[range.raster != 1] <- NA
+  } else {
+    range.raster <- this.species$suitab.raster
+    range.raster <- range.raster[!is.na(range.raster)] <- 1
+    print("Skipping this bit, allopatry set to FALSE")
+  }
+  
+  
+  if(allopatry == FALSE){
+    range.raster <- range.raster[!is.na(range.raster)] <- 1
+  }
+  
+  prob.raster <- logisticFun(this.species$suitab.raster, as.numeric(this.species$PA.conversion["alpha"]), as.numeric(this.species$PA.conversion["beta"]))
+  
+  sample.raster <- ((1 - bias.strength) * prob.raster + 
+                      (bias.strength) * bias.raster * prob.raster) * range.raster
+  
+  nsuit <- sum(getValues(this.species$pa.raster * bias.raster * range.raster) > 0, na.rm=TRUE)
+  print(nsuit)
+  
+}
+env <- env[[these.vars]]
+print(paste("Using variables ", names(env)))
+print(this.species)
+plotResponse(this.species)
+plot(this.species$suitab.raster, main = "Suitability of habitat")
+plot(range.raster, main = "Species range")
+plot(bias.raster, main = "Spatial sampling bias")
+plot(sample.raster, main = "Sample probability")
+save(range.raster, file = paste0(outfile, ".range.Rda"))
+save(this.species, file = paste0(outfile, ".virtualspecies.Rda"))
+```
+
+
+## What proportion of the suitable habitat actually falls within our species range?
+```{r  echo=FALSE}
+
+# Start building an output table of statistics for this run
+if(allopatry == TRUE){
+  freqtable <- freq(species.split)
+  occupancy <- freqtable[1,2]/sum(freqtable[-nrow(freqtable), 2])
+} else {
+  occupancy <- 1
+}
+
+occupancy
+
+out.table <- c("method",  "bias.strength", "occupancy", "statistic", "value")
+names(out.table) <- c("method",  "bias.strength", "occupancy", "statistic", "value")
+```  
+
+## Sampling occurrence data  
+```{r  echo=FALSE}
+print(paste("Bias strength is", bias.strength))
+
+# converting to PA will sometimes pick up zeros, but we don't want that so we have to 
+# set them to NA
+sample.raster[sample.raster == 0] <- NA
+
+pointdata <- mod.randomPoints(sample.raster, prob=TRUE, n = npoints, replace = TRUE)
+pointdata <- as.data.frame(pointdata)
+
+bgdata <- background.buffer(pointdata[,1:2], buffer.width, n.background, env)
+
+plot(prob.raster, main = "Point data")
+points(bgdata[,1:2], pch = 4, col = "red")
+points(pointdata[,1:2], pch = 16)
+
+pointdata <- cbind(rep(1, nrow(pointdata)), pointdata)
+
+
+bgdata <- cbind(rep(0, nrow(bgdata)), bgdata)
+colnames(bgdata) <- colnames(pointdata)
+bgdata <- as.data.frame(bgdata)
+
+pointdata <- rbind(pointdata, bgdata)
+
+colnames(pointdata) <- c("species", "longitude", "latitude")
+pointdata <- cbind(pointdata, extract(env, pointdata[,2:3]))
+write.csv(pointdata, file = paste0(outfile, ".pointdata.csv"), row.names = FALSE)
+
+group <- kfold(pointdata, 5)
+```
+
+## Sample occurrence points (first six of `r npoints`)
+```{r  echo = FALSE}
+kable(head(pointdata[,2:3]))
+```
+
+# Building models using dismo
+
+### GLM
+```{r  echo = FALSE}
+trainauc <- NA
+testauc <- NA
+
+
+this.glm <- glm(species ~ ., data = pointdata[group != 1,-c(2,3)], family = binomial(link = "logit"))
+print(summary(this.glm))  
+predglm <- predict(env, this.glm, type = "response")
+plot(prob.raster, main = "True suitability")
+points(pointdata[pointdata[,1] == 1,2:3], pch = 16)
+plot(predglm, main = "Prediction")
+points(pointdata[pointdata[,1] == 1,2:3], pch = 16)
+points(pointdata[pointdata$species == 1 & group == 1,2:3], pch = 16, col = "red")
+save(this.glm, file = paste0(outfile, ".glm.Rda"))
+
+print(length(group))
+print(nrow(pointdata))
+
+testauc <- dismo::evaluate(pointdata[group == 1 & pointdata$species == 1,], 
+                           pointdata[group == 1 & pointdata$species == 0,], this.glm)
+trainauc <- dismo::evaluate(pointdata[group != 1 & pointdata$species == 1,], 
+                            pointdata[group != 1 & pointdata$species == 0,], this.glm)
+
+print(paste("Correlation with true suitability (full continent):", raster.cor(predglm, prob.raster)))
+
+
+cor.native.spearman <-raster.cor(predglm * range.raster, prob.raster * range.raster)
+cor.native.pearson <-raster.cor(predglm * range.raster, prob.raster * range.raster, method = "pearson")
+cor.native.hoslem <- raster.cor(predglm * range.raster, prob.raster * range.raster, method = "hoslem", g = 10)
+
+print(paste("Spearman rank correlation with true suitability (native range):", cor.native.spearman))
+print(paste("Pearson correlation with true suitability (native range):", cor.native.pearson))
+print(paste("Hosmer-Lemeshow GOF statistic with true suitability (native range):", cor.native.hoslem))
+print("Train AUC:")
+print(trainauc)
+plot(trainauc, 'ROC')
+print("Test AUC:")
+print(testauc)
+plot(testauc, 'ROC')
+
+print("Train Max TSS:")
+print(max(trainauc@TNR + trainauc@TPR) - 1)
+print("Test Max TSS:")
+print(max(testauc@TNR + testauc@TPR) - 1)
+
+print("Train Max Kappa:")
+print(max(trainauc@kappa ))
+print("Test Max Kappa:")
+print(max(testauc@kappa))
+
+c("method",  "bias.strength", "occupancy", "statistic", "value")
+
+if(is.na(testauc@auc) | is.na(trainauc@auc) ){
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "cor.all.spearman", NA))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "cor.native.spearman", NA))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "cor.all.pearson", NA))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "cor.native.pearson", NA))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "cor.all.hoslem", NA))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "cor.native.hoslem", NA))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "train.auc", NA))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "test.auc", NA))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "train.max.tss", NA))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "test.max.tss", NA))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "train.max.kappa", NA))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "test.max.kappa", NA))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "true.native.over.0.5", NA))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "pred.native.over.0.5", NA))
+} else {
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "cor.all.spearman", raster.cor(predglm, prob.raster)))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "cor.native.spearman", cor.native.spearman))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "cor.all.pearson", raster.cor(predglm, prob.raster, method = "pearson")))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "cor.native.pearson", cor.native.pearson))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "cor.all.hoslem", raster.cor(predglm, prob.raster, method = "hoslem", g = 10)))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "cor.native.hoslem", cor.native.hoslem))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "train.auc", trainauc@auc))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "test.auc", testauc@auc))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "train.max.tss", max(trainauc@TNR + trainauc@TPR) - 1))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "test.max.tss", max(testauc@TNR + testauc@TPR) - 1))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "train.max.kappa", max(trainauc@kappa)))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, "test.max.kappa", max(testauc@kappa)))
+  
+  true.over <- sum(as.numeric(values(prob.raster * range.raster) > 0.5), na.rm=TRUE)
+  pred.over <- sum(as.numeric(values(predglm * range.raster) > 0.5), na.rm=TRUE)
+  
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, 
+                                  "true.native.over.0.5", true.over))
+  out.table <- rbind(out.table, c("glm", bias.strength, occupancy, 
+                                  "pred.native.over.0.5", pred.over))
+}
+```
+
+
+### GAM
+```{r  echo = FALSE}
+trainauc <- NA
+testauc <- NA
+
+
+gam.formula <- paste0("s(", names(env), ")")
+gam.formula <- paste(gam.formula, collapse = " + ")
+gam.formula <- formula(x = paste0("species ~ ", gam.formula))
+print(gam.formula)
+
+this.gam <- gam(terms(gam.formula, data = pointdata[group != 1,-c(2,3)]), 
+                data = pointdata[group != 1,-c(2,3)],  family = binomial(link = "logit"))
+print(summary(this.gam))  
+predgam <- predict(env, this.gam, type = "response")
+plot(prob.raster, main = "True suitability")
+points(pointdata[pointdata[,1] == 1,2:3], pch = 16)
+plot(predgam, main = "Prediction")
+points(pointdata[pointdata[,1] == 1,2:3], pch = 16)
+points(pointdata[pointdata$species == 1 & group == 1,2:3], pch = 16, col = "red")
+save(this.gam, file = paste0(outfile, ".gam.Rda"))
+
+testauc <- dismo::evaluate(pointdata[group == 1 & pointdata$species == 1,], 
+                           pointdata[group == 1 & pointdata$species == 0,], this.gam)
+trainauc <- dismo::evaluate(pointdata[group != 1 & pointdata$species == 1,], 
+                            pointdata[group != 1 & pointdata$species == 0,], this.gam)
+
+
+print(paste("Correlation with true suitability (full continent):", raster.cor(predgam, prob.raster)))
+
+
+cor.native.spearman <-raster.cor(predgam * range.raster, prob.raster * range.raster)
+cor.native.pearson <-raster.cor(predgam * range.raster, prob.raster * range.raster, method = "pearson")
+cor.native.hoslem <- raster.cor(predgam * range.raster, prob.raster * range.raster, method = "hoslem", g = 10)
+
+print(paste("Spearman rank correlation with true suitability (native range):", cor.native.spearman))
+print(paste("Pearson correlation with true suitability (native range):", cor.native.pearson))
+print(paste("Hosmer-Lemeshow GOF statistic with true suitability (native range):", cor.native.hoslem))
+print("Train AUC:")
+print(trainauc)
+plot(trainauc, 'ROC')
+print("Test AUC:")
+print(testauc)
+plot(testauc, 'ROC')
+
+print("Train Max TSS:")
+print(max(trainauc@TNR + trainauc@TPR) - 1)
+print("Test Max TSS:")
+print(max(testauc@TNR + testauc@TPR) - 1)
+
+print("Train Max Kappa:")
+print(max(trainauc@kappa ))
+print("Test Max Kappa:")
+print(max(testauc@kappa))
+
+c("method",  "bias.strength", "occupancy", "statistic", "value")
+
+if(is.na(testauc@auc) | is.na(trainauc@auc) ){
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "cor.all.spearman", NA))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "cor.native.spearman", NA))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "cor.all.pearson", NA))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "cor.native.pearson", NA))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "cor.all.hoslem", NA))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "cor.native.hoslem", NA))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "train.auc", NA))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "test.auc", NA))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "train.max.tss", NA))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "test.max.tss", NA))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "train.max.kappa", NA))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "test.max.kappa", NA))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "true.native.over.0.5", NA))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "pred.native.over.0.5", NA))
+} else {
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "cor.all.spearman", raster.cor(predgam, prob.raster)))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "cor.native.spearman", cor.native.spearman))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "cor.all.pearson", raster.cor(predgam, prob.raster, method = "pearson")))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "cor.native.pearson", cor.native.pearson))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "cor.all.hoslem", raster.cor(predgam, prob.raster, method = "hoslem", g = 10)))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "cor.native.hoslem", cor.native.hoslem))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "train.auc", trainauc@auc))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "test.auc", testauc@auc))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "train.max.tss", max(trainauc@TNR + trainauc@TPR) - 1))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "test.max.tss", max(testauc@TNR + testauc@TPR) - 1))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "train.max.kappa", max(trainauc@kappa)))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, "test.max.kappa", max(testauc@kappa)))
+  
+  true.over <- sum(as.numeric(values(prob.raster * range.raster) > 0.5), na.rm=TRUE)
+  pred.over <- sum(as.numeric(values(predgam * range.raster) > 0.5), na.rm=TRUE)
+  
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, 
+                                  "true.native.over.0.5", true.over))
+  out.table <- rbind(out.table, c("gam", bias.strength, occupancy, 
+                                  "pred.native.over.0.5", pred.over))
+}
+```
+
+
+
+### BIOCLIM
+```{r  echo = FALSE}
+trainauc <- NA
+testauc <- NA
+
+this.bc <- bioclim(env, pointdata[pointdata$species == 1 & group != 1, 2:3])
+plot(this.bc)
+predbc <- predict(env, this.bc)
+plot(prob.raster, main = "True suitability")
+points(pointdata[pointdata[,1] == 1,2:3], pch = 16)
+plot(predbc, main = "Prediction")
+points(pointdata[pointdata[,1] == 1,2:3], pch = 16)
+points(pointdata[pointdata$species == 1 & group == 1,2:3], pch = 16, col = "red")
+save(this.bc, file = paste0(outfile, ".bc.Rda"))
+
+testauc <- dismo::evaluate(pointdata[group == 1 & pointdata$species == 1,], 
+                           pointdata[group == 1 & pointdata$species == 0,], this.bc)
+trainauc <- dismo::evaluate(pointdata[group != 1 & pointdata$species == 1,], 
+                            pointdata[group != 1 & pointdata$species == 0,], this.bc)
+
+print(paste("Correlation with true suitability (full continent):", raster.cor(predbc, prob.raster)))
+
+
+cor.native.spearman <-raster.cor(predbc * range.raster, prob.raster * range.raster)
+cor.native.pearson <-raster.cor(predbc * range.raster, prob.raster * range.raster, method = "pearson")
+cor.native.hoslem <- raster.cor(predbc * range.raster, prob.raster * range.raster, method = "hoslem", g = 10)
+
+print(paste("Spearman rank correlation with true suitability (native range):", cor.native.spearman))
+print(paste("Pearson correlation with true suitability (native range):", cor.native.pearson))
+print(paste("Hosmer-Lemeshow GOF statistic with true suitability (native range):", cor.native.hoslem))
+print("Train AUC:")
+print(trainauc)
+plot(trainauc, 'ROC')
+print("Test AUC:")
+print(testauc)
+plot(testauc, 'ROC')
+
+print("Train Max TSS:")
+print(max(trainauc@TNR + trainauc@TPR) - 1)
+print("Test Max TSS:")
+print(max(testauc@TNR + testauc@TPR) - 1)
+
+print("Train Max Kappa:")
+print(max(trainauc@kappa ))
+print("Test Max Kappa:")
+print(max(testauc@kappa))
+
+c("method",  "bias.strength", "occupancy", "statistic", "value")
+
+if(is.na(testauc@auc) | is.na(trainauc@auc) ){
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "cor.all.spearman", NA))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "cor.native.spearman", NA))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "cor.all.pearson", NA))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "cor.native.pearson", NA))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "cor.all.hoslem", NA))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "cor.native.hoslem", NA))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "train.auc", NA))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "test.auc", NA))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "train.max.tss", NA))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "test.max.tss", NA))
+  out.table <- rbind(out.table, c("bv", bias.strength, occupancy, "train.max.kappa", NA))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "test.max.kappa", NA))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "true.native.over.0.5", NA))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "pred.native.over.0.5", NA))
+} else {
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "cor.all.spearman", raster.cor(predbc, prob.raster)))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "cor.native.spearman", cor.native.spearman))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "cor.all.pearson", raster.cor(predbc, prob.raster, method = "pearson")))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "cor.native.pearson", cor.native.pearson))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "cor.all.hoslem", raster.cor(predbc, prob.raster, method = "hoslem", g = 10)))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "cor.native.hoslem", cor.native.hoslem))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "train.auc", trainauc@auc))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "test.auc", testauc@auc))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "train.max.tss", max(trainauc@TNR + trainauc@TPR) - 1))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "test.max.tss", max(testauc@TNR + testauc@TPR) - 1))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "train.max.kappa", max(trainauc@kappa)))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, "test.max.kappa", max(testauc@kappa)))
+  
+  true.over <- sum(as.numeric(values(prob.raster * range.raster) > 0.5), na.rm=TRUE)
+  pred.over <- sum(as.numeric(values(predbc * range.raster) > 0.5), na.rm=TRUE)
+  
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, 
+                                  "true.native.over.0.5", true.over))
+  out.table <- rbind(out.table, c("bc", bias.strength, occupancy, 
+                                  "pred.native.over.0.5", pred.over))
+}
+```
+
+
+
+
+### DOMAIN
+```{r  echo = FALSE}
+trainauc <- NA
+testauc <- NA
+
+this.dm <- domain(env, pointdata[pointdata$species == 1 & group != 1, 2:3])
+preddm <- predict(env, this.dm)
+plot(prob.raster, main = "True suitability")
+points(pointdata[pointdata[,1] == 1,2:3], pch = 16)
+plot(preddm, main = "Prediction")
+points(pointdata[pointdata[,1] == 1,2:3], pch = 16)
+points(pointdata[pointdata$species == 1 & group == 1,2:3], pch = 16, col = "red")
+save(this.dm, file = paste0(outfile, ".dm.Rda"))
+
+testauc <- dismo::evaluate(pointdata[group == 1 & pointdata$species == 1,], 
+                           pointdata[group == 1 & pointdata$species == 0,], this.dm)
+trainauc <- dismo::evaluate(pointdata[group != 1 & pointdata$species == 1,], 
+                            pointdata[group != 1 & pointdata$species == 0,], this.dm)
+
+print(paste("Correlation with true suitability (full continent):", raster.cor(preddm, prob.raster)))
+
+
+cor.native.spearman <-raster.cor(preddm * range.raster, prob.raster * range.raster)
+cor.native.pearson <-raster.cor(preddm * range.raster, prob.raster * range.raster, method = "pearson")
+cor.native.hoslem <- raster.cor(preddm * range.raster, prob.raster * range.raster, method = "hoslem", g = 10)
+
+print(paste("Spearman rank correlation with true suitability (native range):", cor.native.spearman))
+print(paste("Pearson correlation with true suitability (native range):", cor.native.pearson))
+print(paste("Hosmer-Lemeshow GOF statistic with true suitability (native range):", cor.native.hoslem))
+print("Train AUC:")
+print(trainauc)
+plot(trainauc, 'ROC')
+print("Test AUC:")
+print(testauc)
+plot(testauc, 'ROC')
+
+print("Train Max TSS:")
+print(max(trainauc@TNR + trainauc@TPR) - 1)
+print("Test Max TSS:")
+print(max(testauc@TNR + testauc@TPR) - 1)
+
+print("Train Max Kappa:")
+print(max(trainauc@kappa ))
+print("Test Max Kappa:")
+print(max(testauc@kappa))
+
+c("method",  "bias.strength", "occupancy", "statistic", "value")
+
+if(is.na(testauc@auc) | is.na(trainauc@auc) ){
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "cor.all.spearman", NA))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "cor.native.spearman", NA))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "cor.all.pearson", NA))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "cor.native.pearson", NA))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "cor.all.hoslem", NA))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "cor.native.hoslem", NA))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "train.auc", NA))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "test.auc", NA))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "train.max.tss", NA))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "test.max.tss", NA))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "train.max.kappa", NA))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "test.max.kappa", NA))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "true.native.over.0.5", NA))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "pred.native.over.0.5", NA))
+} else {
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "cor.all.spearman", raster.cor(preddm, prob.raster)))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "cor.native.spearman", cor.native.spearman))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "cor.all.pearson", raster.cor(preddm, prob.raster, method = "pearson")))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "cor.native.pearson", cor.native.pearson))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "cor.all.hoslem", raster.cor(preddm, prob.raster, method = "hoslem", g = 10)))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "cor.native.hoslem", cor.native.hoslem))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "train.auc", trainauc@auc))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "test.auc", testauc@auc))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "train.max.tss", max(trainauc@TNR + trainauc@TPR) - 1))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "test.max.tss", max(testauc@TNR + testauc@TPR) - 1))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "train.max.kappa", max(trainauc@kappa)))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, "test.max.kappa", max(testauc@kappa)))
+  
+  true.over <- sum(as.numeric(values(prob.raster * range.raster) > 0.5), na.rm=TRUE)
+  pred.over <- sum(as.numeric(values(preddm * range.raster) > 0.5), na.rm=TRUE)
+  
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, 
+                                  "true.native.over.0.5", true.over))
+  out.table <- rbind(out.table, c("dm", bias.strength, occupancy, 
+                                  "pred.native.over.0.5", pred.over))
+}
+```
+
+
+### MAXENT
+```{r  echo = FALSE}
+
+trainauc <- NA
+testauc <- NA
+
+this.mx <- maxent(env, p = pointdata[pointdata$species == 1 & group != 1, 2:3], a = pointdata[pointdata$species == 0 & group != 1, 2:3])
+predmx <- predict(env, this.mx)
+plot(prob.raster, main = "True suitability")
+points(pointdata[pointdata[,1] == 1,2:3], pch = 16)
+plot(predmx, main = "Prediction")
+points(pointdata[pointdata[,1] == 1,2:3], pch = 16)
+points(pointdata[pointdata$species == 1 & group == 1,2:3], pch = 16, col = "red")
+save(this.mx, file = paste0(outfile, ".mx.Rda"))
+
+testauc <- dismo::evaluate(pointdata[group == 1 & pointdata$species == 1,], 
+                           pointdata[group == 1 & pointdata$species == 0,], this.mx)
+trainauc <- dismo::evaluate(pointdata[group != 1 & pointdata$species == 1,], 
+                            pointdata[group != 1 & pointdata$species == 0,], this.mx)
+
+print(paste("Correlation with true suitability (full continent):", raster.cor(predmx, prob.raster)))
+
+
+cor.native.spearman <-raster.cor(predmx * range.raster, prob.raster * range.raster)
+cor.native.pearson <-raster.cor(predmx * range.raster, prob.raster * range.raster, method = "pearson")
+cor.native.hoslem <- raster.cor(predmx * range.raster, prob.raster * range.raster, method = "hoslem", g = 10)
+
+print(paste("Spearman rank correlation with true suitability (native range):", cor.native.spearman))
+print(paste("Pearson correlation with true suitability (native range):", cor.native.pearson))
+print(paste("Hosmer-Lemeshow GOF statistic with true suitability (native range):", cor.native.hoslem))
+print("Train AUC:")
+print(trainauc)
+plot(trainauc, 'ROC')
+print("Test AUC:")
+print(testauc)
+plot(testauc, 'ROC')
+
+print("Train Max TSS:")
+print(max(trainauc@TNR + trainauc@TPR) - 1)
+print("Test Max TSS:")
+print(max(testauc@TNR + testauc@TPR) - 1)
+
+print("Train Max Kappa:")
+print(max(trainauc@kappa ))
+print("Test Max Kappa:")
+print(max(testauc@kappa))
+
+c("method",  "bias.strength", "occupancy", "statistic", "value")
+
+if(is.na(testauc@auc) | is.na(trainauc@auc) ){
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "cor.all.spearman", NA))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "cor.native.spearman", NA))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "cor.all.pearson", NA))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "cor.native.pearson", NA))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "cor.all.hoslem", NA))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "cor.native.hoslem", NA))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "train.auc", NA))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "test.auc", NA))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "train.max.tss", NA))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "test.max.tss", NA))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "train.max.kappa", NA))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "test.max.kappa", NA))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "true.native.over.0.5", NA))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "pred.native.over.0.5", NA))
+} else {
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "cor.all.spearman", raster.cor(predmx, prob.raster)))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "cor.native.spearman", cor.native.spearman))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "cor.all.pearson", raster.cor(predmx, prob.raster, method = "pearson")))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "cor.native.pearson", cor.native.pearson))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "cor.all.hoslem", raster.cor(predmx, prob.raster, method = "hoslem", g = 10)))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "cor.native.hoslem", cor.native.hoslem))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "train.auc", trainauc@auc))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "test.auc", testauc@auc))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "train.max.tss", max(trainauc@TNR + trainauc@TPR) - 1))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "test.max.tss", max(testauc@TNR + testauc@TPR) - 1))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "train.max.kappa", max(trainauc@kappa)))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, "test.max.kappa", max(testauc@kappa)))
+  
+  true.over <- sum(as.numeric(values(prob.raster * range.raster) > 0.5), na.rm=TRUE)
+  pred.over <- sum(as.numeric(values(predmx * range.raster) > 0.5), na.rm=TRUE)
+  
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, 
+                                  "true.native.over.0.5", true.over))
+  out.table <- rbind(out.table, c("mx", bias.strength, occupancy, 
+                                  "pred.native.over.0.5", pred.over))
+}
+```
+
+
+### RANDOM FOREST
+```{r  echo = FALSE}
+trainauc <- NA
+testauc <- NA
+
+this.rf <- randomForest(species ~ ., data=pointdata[group != 1,-c(2,3)])
+predrf <- predict(env, this.rf, type = "response")
+plot(prob.raster, main = "True suitability")
+points(pointdata[pointdata[,1] == 1,2:3], pch = 16)
+plot(predrf, main = "Prediction")
+points(pointdata[pointdata[,1] == 1,2:3], pch = 16)
+points(pointdata[pointdata$species == 1 & group == 1,2:3], pch = 16, col = "red")
+save(this.rf, file = paste0(outfile, ".rf.Rda"))
+
+testauc <- dismo::evaluate(pointdata[group == 1 & pointdata$species == 1,], 
+                           pointdata[group == 1 & pointdata$species == 0,], this.rf)
+trainauc <- dismo::evaluate(pointdata[group != 1 & pointdata$species == 1,], 
+                            pointdata[group != 1 & pointdata$species == 0,], this.rf)
+
+print(paste("Correlation with true suitability (full continent):", raster.cor(predrf, prob.raster)))
+
+
+cor.native.spearman <-raster.cor(predrf * range.raster, prob.raster * range.raster)
+cor.native.pearson <-raster.cor(predrf * range.raster, prob.raster * range.raster, method = "pearson")
+cor.native.hoslem <- raster.cor(predrf * range.raster, prob.raster * range.raster, method = "hoslem", g = 10)
+
+print(paste("Spearman rank correlation with true suitability (native range):", cor.native.spearman))
+print(paste("Pearson correlation with true suitability (native range):", cor.native.pearson))
+print(paste("Hosmer-Lemeshow GOF statistic with true suitability (native range):", cor.native.hoslem))
+print("Train AUC:")
+print(trainauc)
+plot(trainauc, 'ROC')
+print("Test AUC:")
+print(testauc)
+plot(testauc, 'ROC')
+
+print("Train Max TSS:")
+print(max(trainauc@TNR + trainauc@TPR) - 1)
+print("Test Max TSS:")
+print(max(testauc@TNR + testauc@TPR) - 1)
+
+print("Train Max Kappa:")
+print(max(trainauc@kappa ))
+print("Test Max Kappa:")
+print(max(testauc@kappa))
+
+c("method",  "bias.strength", "occupancy", "statistic", "value")
+
+if(is.na(testauc@auc) | is.na(trainauc@auc) ){
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "cor.all.spearman", NA))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "cor.native.spearman", NA))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "cor.all.pearson", NA))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "cor.native.pearson", NA))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "cor.all.hoslem", NA))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "cor.native.hoslem", NA))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "train.auc", NA))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "test.auc", NA))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "train.max.tss", NA))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "test.max.tss", NA))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "train.max.kappa", NA))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "test.max.kappa", NA))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "true.native.over.0.5", NA))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "pred.native.over.0.5", NA))
+} else {
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "cor.all.spearman", raster.cor(predrf, prob.raster)))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "cor.native.spearman", cor.native.spearman))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "cor.all.pearson", raster.cor(predrf, prob.raster, method = "pearson")))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "cor.native.pearson", cor.native.pearson))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "cor.all.hoslem", raster.cor(predrf, prob.raster, method = "hoslem", g = 10)))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "cor.native.hoslem", cor.native.hoslem))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "train.auc", trainauc@auc))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "test.auc", testauc@auc))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "train.max.tss", max(trainauc@TNR + trainauc@TPR) - 1))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "test.max.tss", max(testauc@TNR + testauc@TPR) - 1))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "train.max.kappa", max(trainauc@kappa)))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, "test.max.kappa", max(testauc@kappa)))
+  
+  true.over <- sum(as.numeric(values(prob.raster * range.raster) > 0.5), na.rm=TRUE)
+  pred.over <- sum(as.numeric(values(predrf * range.raster) > 0.5), na.rm=TRUE)
+  
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, 
+                                  "true.native.over.0.5", true.over))
+  out.table <- rbind(out.table, c("rf", bias.strength, occupancy, 
+                                  "pred.native.over.0.5", pred.over))
+}
+```
+
+
+
+### BRT/GBM
+```{r  echo = FALSE}
+trainauc <- NA
+testauc <- NA
+
+this.brt <- gbm.step(data = pointdata[group != 1,], gbm.x = 4:ncol(pointdata), gbm.y = 1, family = "bernoulli")
+save(this.brt, file = paste0(outfile, ".brt.Rda"))
+gbm.plot(this.brt)
+
+this.brt.simple <- gbm.simplify(this.brt)
+save(this.brt.simple, file = paste0(outfile, ".simplified.brt.Rda"))
+
+predbrt <- predict(env, this.brt, n.trees = this.brt.simple$gbm.call$best.trees, type = "response")
+plot(prob.raster, main = "True suitability")
+points(pointdata[pointdata[,1] == 1,2:3], pch = 16)
+plot(predbrt, main = "Prediction")
+points(pointdata[pointdata[,1] == 1,2:3], pch = 16)
+points(pointdata[pointdata$species == 1 & group == 1,2:3], pch = 16, col = "red")
+# 
+# print(pointdata[group == 1 & pointdata$species == 1,])
+# print(pointdata[group == 1 & pointdata$species == 0,])
+
+testauc <- dismo::evaluate(pointdata[group == 1 & pointdata$species == 1,], 
+                           pointdata[group == 1 & pointdata$species == 0,], this.brt,  n.trees = this.brt.simple$gbm.call$best.trees)
+trainauc <- dismo::evaluate(pointdata[group != 1 & pointdata$species == 1,], 
+                            pointdata[group != 1 & pointdata$species == 0,], this.brt,  n.trees = this.brt.simple$gbm.call$best.trees)
+
+print(paste("Correlation with true suitability (full continent):", raster.cor(predbrt, prob.raster)))
+
+
+cor.native.spearman <-raster.cor(predbrt * range.raster, prob.raster * range.raster)
+cor.native.pearson <-raster.cor(predbrt * range.raster, prob.raster * range.raster, method = "pearson")
+cor.native.hoslem <- raster.cor(predbrt * range.raster, prob.raster * range.raster, method = "hoslem", g = 10)
+
+print(paste("Spearman rank correlation with true suitability (native range):", cor.native.spearman))
+print(paste("Pearson correlation with true suitability (native range):", cor.native.pearson))
+print(paste("Hosmer-Lemeshow GOF statistic with true suitability (native range):", cor.native.hoslem))
+print("Train AUC:")
+print(trainauc)
+plot(trainauc, 'ROC')
+print("Test AUC:")
+print(testauc)
+plot(testauc, 'ROC')
+
+print("Train Max TSS:")
+print(max(trainauc@TNR + trainauc@TPR) - 1)
+print("Test Max TSS:")
+print(max(testauc@TNR + testauc@TPR) - 1)
+
+print("Train Max Kappa:")
+print(max(trainauc@kappa ))
+print("Test Max Kappa:")
+print(max(testauc@kappa))
+
+c("method",  "bias.strength", "occupancy", "statistic", "value")
+
+if(is.na(testauc@auc) | is.na(trainauc@auc) ){
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "cor.all.spearman", NA))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "cor.native.spearman", NA))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "cor.all.pearson", NA))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "cor.native.pearson", NA))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "cor.all.hoslem", NA))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "cor.native.hoslem", NA))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "train.auc", NA))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "test.auc", NA))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "train.max.tss", NA))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "test.max.tss", NA))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "train.max.kappa", NA))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "test.max.kappa", NA))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "true.native.over.0.5", NA))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "pred.native.over.0.5", NA))
+} else {
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "cor.all.spearman", raster.cor(predbrt, prob.raster)))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "cor.native.spearman", cor.native.spearman))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "cor.all.pearson", raster.cor(predbrt, prob.raster, method = "pearson")))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "cor.native.pearson", cor.native.pearson))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "cor.all.hoslem", raster.cor(predbrt, prob.raster, method = "hoslem", g = 10)))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "cor.native.hoslem", cor.native.hoslem))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "train.auc", trainauc@auc))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "test.auc", testauc@auc))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "train.max.tss", max(trainauc@TNR + trainauc@TPR) - 1))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "test.max.tss", max(testauc@TNR + testauc@TPR) - 1))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "train.max.kappa", max(trainauc@kappa)))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, "test.max.kappa", max(testauc@kappa)))
+  
+  true.over <- sum(as.numeric(values(prob.raster * range.raster) > 0.5), na.rm=TRUE)
+  pred.over <- sum(as.numeric(values(predbrt * range.raster) > 0.5), na.rm=TRUE)
+  
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, 
+                                  "true.native.over.0.5", true.over))
+  out.table <- rbind(out.table, c("brt", bias.strength, occupancy, 
+                                  "pred.native.over.0.5", pred.over))
+}
+```
+
+
+# Summary of results
+```{r  echo = FALSE}
+row.names(out.table) <- NULL
+out.table <- out.table[-1,]
+kable(out.table)
+write.csv(out.table, file = paste0(outfile, ".summary.csv"), row.names = FALSE)
+print(Sys.time())
+```

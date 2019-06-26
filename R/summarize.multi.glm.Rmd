@@ -1,0 +1,50 @@
+---
+title: "summarize.multi.glm"
+author: "Dan Warren"
+date: "January 29, 2016"
+output: html_document
+---
+Multi-GLM Summary
+=================================
+***
+  
+***
+# AUC on training data
+### Rows indicate model making the prediction, columns indicate data being predicted
+```{r warning=FALSE, echo=FALSE, fig.width=17, fig.height=17}
+kable(multi.glm$train.pred.table, digits = 3)
+```
+
+
+# AUC on test data
+### Rows indicate model making the prediction, columns indicate data being predicted
+```{r warning=FALSE, echo=FALSE, fig.width=17, fig.height=17}
+kable(multi.glm$test.pred.table, digits = 3)
+```
+
+# Spearman rank correlation, model vs. truth
+### Rows indicate model making the prediction, columns indicate data being predicted
+```{r warning=FALSE, echo=FALSE, fig.width=17, fig.height=17}
+kable(multi.glm$truth.table, digits = 3)
+```
+
+
+# Models and predictions
+```{r warning=FALSE, echo=FALSE, fig.width=17, fig.height=17}
+print("Combined suitability, all species")
+plot(multi.glm$merged.suitability)
+print("Combined model, all species")
+plot(multi.glm$predictions$all)
+
+for(i in names(multi.glm$species)){
+   this.sp <- i
+   print(multi.glm$species[[i]]$species.name)
+   print(multi.glm$species[[i]]$virtualspecies)
+   par(cex = 1.5)
+   plotResponse(multi.glm$species[[i]]$virtualspecies, cex=1.5)
+   par(mfrow=c(1,1), cex = 1.5)
+   print(multi.glm$species[[i]], print.tables=FALSE)
+   points(multi.glm$species[[i]]$presence.points)
+   plot(multi.glm$predictions[[i]])
+}
+```
