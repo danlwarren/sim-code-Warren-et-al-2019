@@ -1,7 +1,6 @@
 setwd("~/GitHub/SDM-sim/")
 source("./R/SDM-sim.R")
-source("range.contraction.sim.logistic.R")
-library(knitr)
+source("sim.logistic.regback.R")
 
 # Grabbing the first 19 Bioclim variables
 # Note you can also grab from online using getData
@@ -36,34 +35,28 @@ bias.levels <- seq(0, 1, by=0.1)
 test.grid <- expand.grid(reps, bias.levels)
 test.grid <- test.grid[sample(1:nrow(test.grid)),]
 
-run.sim <- function(x){
-  bias.strength <- as.numeric(x[2])
-  rep <- as.numeric(x[1])
+for(i in 1:nrow(test.grid)){
+  bias.strength <- test.grid[i, 2]
+  rep <- test.grid[i,1]
   if(rep < 3){allopatry = FALSE}
   else{allopatry = TRUE}
   
-  path <- paste0("./logistic sims block/bias_", bias.strength, "_rep_", rep, "/")
+  path <- paste0("./logistic sims regback/bias_", bias.strength, "_rep_", rep, "/")
   dir.create(path, showWarnings = TRUE, recursive = FALSE)
   
   outfile <- paste0(path, "bias_", bias.strength, "_rep_", rep)
   
   print(outfile)
-  print(bias.raster)
-  print(bias.strength)
-  print(allopatry)
   
-  range.contraction.sim.logistic(bias.raster = bias.raster, outfile = outfile, replace = TRUE, 
-                                 bias.strength = bias.strength, allopatry = allopatry)
-  
+  sim.logistic(bias.raster = bias.raster, outfile = outfile, replace = TRUE, 
+                        bias.strength = bias.strength, allopatry = allopatry)
 }
 
 
-lapply(1:nrow(test.grid), function(x) run.sim(test.grid[x,]))
 
 
 
 
-
-range.contraction.sim.logistic(bias.raster = bias.raster, outfile = "./logistic sims block/newtest", replace = TRUE, bias.strength = 0.2, allopatry = TRUE)
+sim.logistic(bias.raster = bias.raster, outfile = "./logistic sims regback", replace = TRUE, bias.strength = 0.2, allopatry = TRUE)
 
 

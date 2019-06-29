@@ -1,6 +1,6 @@
 setwd("~/GitHub/SDM-sim/")
 source("./R/SDM-sim.R")
-source("range.contraction.sim.logistic.simple.R")
+source("sim.logistic.simple.R")
 
 # Grabbing the first 19 Bioclim variables
 # Note you can also grab from online using getData
@@ -48,7 +48,7 @@ for(i in 1:nrow(test.grid)){
   
   print(outfile)
   
-  range.contraction.sim.logistic.simple(bias.raster = bias.raster, outfile = outfile, replace = TRUE, 
+  sim.logistic.simple(bias.raster = bias.raster, outfile = outfile, replace = TRUE, 
                         bias.strength = bias.strength, allopatry = allopatry)
 }
 
@@ -57,6 +57,6 @@ for(i in 1:nrow(test.grid)){
 
 
 
-range.contraction.sim.logistic.simple(bias.raster = bias.raster, outfile = "./logistic sims simple/newtest", replace = TRUE, bias.strength = 0.2, allopatry = TRUE)
+sim.logistic.simple(bias.raster = bias.raster, outfile = "./logistic sims simple", replace = TRUE, bias.strength = 0.2, allopatry = TRUE)
 
 

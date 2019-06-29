@@ -1,5 +1,5 @@
 ---
-title: "range.contraction.sim"
+title: "sim"
 author: "Dan Warren"
 date: "15 April 2016"
 output: html_document
@@ -40,13 +40,11 @@ this.stack <- NULL
 cor.native.spearman <- NULL
 true.over <- NULL
 pred.over <- NULL
-these.vars <- NULL
 
 print(Sys.time())
 nsuit <- 0
 while(nsuit < 50){
-  these.vars <- sample(names(env), nvars + 2)
-  this.species <- generateRandomSp(stack(env[[these.vars[1:nvars]]]), plot=FALSE, beta = 0.5)
+  this.species <- generateRandomSp(stack(env[[sample(names(env), nvars)]]), plot=FALSE, beta = 0.5)
   
   if(allopatry == TRUE){
     this.pa <- convertToPA(this.species, PA.method = "threshold", beta = 0.5, plot=FALSE)
@@ -85,8 +83,6 @@ while(nsuit < 50){
   print(nsuit)
   
 }
-env <- env[[these.vars]]
-print(paste("Using variables ", names(env)))
 print(this.species)
 plotResponse(this.species)
 plot(this.species$suitab.raster, main = "Suitability of habitat")
@@ -254,12 +250,9 @@ trainauc <- NA
 testauc <- NA
 
 
-gam.formula <- paste0("s(", names(env), ")")
-gam.formula <- paste(gam.formula, collapse = " + ")
-gam.formula <- formula(x = paste0("species ~ ", gam.formula))
-print(gam.formula)
-
-this.gam <- gam(terms(gam.formula, data = pointdata[group != 1,-c(2,3)]), 
+this.gam <- gam(terms(species ~ s(bio1) + s(bio2) + s(bio3) + s(bio4) + s(bio5) + s(bio6) + s(bio7) + s(bio8) + 
+                        s(bio9) + s(bio10) + s(bio11) + s(bio12) + s(bio13) + s(bio14) + s(bio15) + s(bio16) + s(bio17) + 
+                        s(bio18) + s(bio19), data = pointdata[group != 1,-c(2,3)]), 
                 data = pointdata[group != 1,-c(2,3)],  family = binomial(link = "logit"))
 print(summary(this.gam))  
 predgam <- predict(env, this.gam, type = "response")
@@ -708,7 +701,7 @@ if(is.na(testauc@auc) | is.na(trainauc@auc) ){
 trainauc <- NA
 testauc <- NA
 
-this.brt <- gbm.step(data = pointdata[group != 1,], gbm.x = 4:ncol(pointdata), gbm.y = 1, family = "bernoulli")
+this.brt <- gbm.step(data = pointdata[group != 1,], gbm.x = 4:22, gbm.y = 1, family = "bernoulli")
 save(this.brt, file = paste0(outfile, ".brt.Rda"))
 gbm.plot(this.brt)
 

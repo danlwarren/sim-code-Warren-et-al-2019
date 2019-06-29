@@ -1,5 +1,5 @@
 ---
-title: "range.contraction.sim"
+title: "sim"
 author: "Dan Warren"
 date: "15 April 2016"
 output: html_document
@@ -78,10 +78,9 @@ while(nsuit < 50){
   
   sample.raster <- ((1 - bias.strength) * prob.raster + 
                       (bias.strength) * bias.raster * prob.raster) * range.raster
-  
+  plot(sample.raster)
   nsuit <- sum(getValues(this.species$pa.raster * bias.raster * range.raster) > 0, na.rm=TRUE)
   print(nsuit)
-  
 }
 print(this.species)
 plotResponse(this.species)
@@ -130,18 +129,23 @@ points(pointdata[,1:2], pch = 16)
 
 pointdata <- cbind(rep(1, nrow(pointdata)), pointdata)
 
-
 bgdata <- cbind(rep(0, nrow(bgdata)), bgdata)
+
+
 colnames(bgdata) <- colnames(pointdata)
 bgdata <- as.data.frame(bgdata)
 
 pointdata <- rbind(pointdata, bgdata)
 
+
+blocks <- get.block(pointdata[,2:3], pointdata[,2:3])
+
+
 colnames(pointdata) <- c("species", "longitude", "latitude")
 pointdata <- cbind(pointdata, extract(env, pointdata[,2:3]))
 write.csv(pointdata, file = paste0(outfile, ".pointdata.csv"), row.names = FALSE)
 
-group <- kfold(pointdata, 5)
+group <- c(blocks$occ.grp)
 ```
 
 ## Sample occurrence points (first six of `r npoints`)

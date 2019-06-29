@@ -1,5 +1,5 @@
 ---
-title: "range.contraction.sim"
+title: "sim"
 author: "Dan Warren"
 date: "15 April 2016"
 output: html_document

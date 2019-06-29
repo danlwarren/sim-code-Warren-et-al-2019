@@ -1,6 +1,6 @@
 setwd("~/GitHub/SDM-sim/")
 source("./R/SDM-sim.R")
-source("range.contraction.sim.logistic.largeback.R")
+source("sim.logistic.hugeback.R")
 
 # Grabbing the first 19 Bioclim variables
 # Note you can also grab from online using getData
@@ -41,14 +41,14 @@ for(i in 1:nrow(test.grid)){
   if(rep < 3){allopatry = FALSE}
   else{allopatry = TRUE}
   
-  path <- paste0("./logistic sims largeback/bias_", bias.strength, "_rep_", rep, "/")
+  path <- paste0("./logistic sims hugeback/bias_", bias.strength, "_rep_", rep, "/")
   dir.create(path, showWarnings = TRUE, recursive = FALSE)
   
   outfile <- paste0(path, "bias_", bias.strength, "_rep_", rep)
   
   print(outfile)
   
-  range.contraction.sim.logistic(bias.raster = bias.raster, outfile = outfile, replace = TRUE, 
+  sim.logistic(bias.raster = bias.raster, outfile = outfile, replace = TRUE, 
                         bias.strength = bias.strength, allopatry = allopatry)
 }
 
@@ -57,6 +57,6 @@ for(i in 1:nrow(test.grid)){
 
 
 
-range.contraction.sim.logistic(bias.raster = bias.raster, outfile = "./logistic sims largeback/newtest", replace = TRUE, bias.strength = 0.2, allopatry = TRUE)
+sim.logistic(bias.raster = bias.raster, outfile = "./logistic sims hugeback", replace = TRUE, bias.strength = 0.2, allopatry = TRUE)
 
 
