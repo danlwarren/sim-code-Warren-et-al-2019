@@ -1,0 +1,191 @@
+---
+title: "Projections"
+author: "Dan Warren"
+date: "20 May 2016"
+output: html_document
+---
+
+# Output of sims
+
+```{r}
+setwd("~/GitHub/SDM-sim/logistic sims hugeback/")
+library(ggplot2)
+library(plyr)
+library(scatterplot3d)
+library(virtualspecies)
+library(nlme)
+library(knitr)
+library(randomForest)
+library(gbm)
+
+sims <- list.dirs()
+
+# Get rid of "."
+sims <- sims[-1]
+
+sims <- sample(sims)
+
+proj.layers <- list.files("~/GitHub/SDM-Sim/Australia CliMond", pattern = ".grd", full.names = TRUE)  
+print.proj.layers <- list.files("~/GitHub/SDM-Sim/Australia CliMond", pattern = ".grd")  
+
+
+project.and.report <- function(thisdir){
+  
+  outfile <- paste0(thisdir, sub(".", "", thisdir), ".projection.summary.csv")
+  if(file.exists(outfile)){
+    this.df <- read.csv(outfile)
+    print(paste("Skipping", thisdir))
+  } else {
+    
+    pointfile <- paste0(thisdir, sub(".", "", thisdir), ".pointdata.csv")
+    pointdata <- read.csv(pointfile)
+    
+    # Species will be named "this.species"
+    load(paste0(thisdir, sub(".", "", thisdir), ".virtualspecies.Rda"))
+    
+    models <- paste0(thisdir, sub(".", "", thisdir), c(".glm", ".gam", ".bc", ".dm", ".mx", ".brt", ".rf"), ".Rda")
+    models <- models[file.exists(models)]
+    
+    
+    this.df <- expand.grid(models, proj.layers[-1])
+    colnames(this.df) <- c("model", "projection.layers")
+    this.df$true.change.all <- rep(NA, nrow(this.df))
+    this.df$pred.change.all <- rep(NA, nrow(this.df))
+    this.df$pred.error.all <- rep(NA, nrow(this.df))
+    this.df$pred.cor.all <- rep(NA, nrow(this.df))
+    this.df$true.change.occ <- rep(NA, nrow(this.df))
+    this.df$pred.change.occ <- rep(NA, nrow(this.df))
+    this.df$pred.error.occ <- rep(NA, nrow(this.df))
+    this.df$pred.cor.occ <- rep(NA, nrow(this.df)) 
+    this.df$true.cells.declining.all <- rep(NA, nrow(this.df))
+    this.df$pred.cells.declining.all <- rep(NA, nrow(this.df))
+    this.df$prop.agreed.declining.all <- rep(NA, nrow(this.df))
+    this.df$true.cells.declining.occ <- rep(NA, nrow(this.df))
+    this.df$pred.cells.declining.occ <- rep(NA, nrow(this.df))
+    this.df$prop.agreed.declining.occ <- rep(NA, nrow(this.df))
+    this.df$spearman.occ <- rep(NA, nrow(this.df))
+    this.df$spearman.all <- rep(NA, nrow(this.df))
+    for(i in 1:length(models)){
+      
+      print(paste(thisdir, models[i]))
+      
+      # This is a bit clunky but it loads a model in and renames it this.model
+      this.model <- eval(parse(text = load(models[i])))
+      if(is.null(this.model)){
+        next
+      }
+      
+      present <- stack(proj.layers[1])
+      present <- present[[1:19]]
+      
+      pointraster <- rasterize(pointdata[pointdata$species == 1,2:3], present[[1]], field = 1)
+      
+      present.truth <- this.species$suitab.raster
+      
+      for(j in 2:length(proj.layers)){
+        
+        print(paste(models[i], print.proj.layers[j]))
+        this.env <- stack(proj.layers[j])
+        this.env <- this.env[[1:19]]
+        
+        if(grepl(models[i], pattern = "brt.Rda")){
+          load(gsub(pattern = "brt", "simplified.brt", x =models[i]))
+          present.prediction <- predict(present, this.brt, n.trees = this.brt.simple$gbm.call$best.trees, type = "response")
+          this.pred <- predict(this.env, this.brt, n.trees = this.brt.simple$gbm.call$best.trees, type = "response")
+        } else {
+          present.prediction <- predict(present, this.model, type = "response")
+          this.pred <- predict(this.env, this.model, type = "response")
+        }
+        
+        
+        
+        this.true <- generateSpFromFun(this.env[[this.species$details$variables]], 
+                                       this.species$details$parameters)$suitab.raster  
+        
+        prediction.error <- stack(this.true - present.truth, this.pred - present.prediction)
+        names(prediction.error) <- c("True change", "Predicted change")
+        plot(prediction.error)
+        
+        spearman.all.df <- cbind(getValues(this.true), getValues(this.pred))
+        spearman.all.df <- spearman.all.df[complete.cases(spearman.all.df),]
+        spearman.all <- cor(spearman.all.df, method = "spearman")[1,2]
+        this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], "spearman.all"] <- spearman.all
+        
+        
+        spearman.occ.df <- cbind(getValues(this.true * pointraster), getValues(this.pred * pointraster))
+        spearman.occ.df <- spearman.occ.df[complete.cases(spearman.occ.df),]
+        spearman.occ <- cor(spearman.occ.df, method = "spearman")[1,2]
+        this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], "spearman.occ"] <- spearman.occ
+        
+        
+        true.change.all <- getValues(prediction.error[[1]])
+        qplot(true.change.all, main = "True change in habitat suitability")
+        this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], "true.change.all"] <- mean(true.change.all, na.rm=TRUE)
+        
+        this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], "true.cells.declining.all"] <- sum(getValues(prediction.error[[1]]) < 0, na.rm=TRUE)
+        
+        this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], "pred.cells.declining.all"] <- sum(getValues(prediction.error[[2]]) < 0, na.rm=TRUE)
+        
+        this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], "prop.agreed.declining.all"] <- sum(getValues(prediction.error[[2]]) < 0 & getValues(prediction.error[[1]]) < 0, na.rm=TRUE)/sum(getValues(prediction.error[[2]]) < 0 | getValues(prediction.error[[1]]) < 0, na.rm=TRUE)
+        
+        pred.change.all <- getValues(prediction.error[[2]])
+        qplot(pred.change.all, main = "Predicted change in habitat suitability")
+        this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], "pred.change.all"] <- mean(pred.change.all, na.rm=TRUE)
+        
+        pred.error.all <- getValues(prediction.error[[2]] - prediction.error[[1]]) 
+        qplot(pred.error.all, main = "Prediction error")
+        this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], "pred.error.all"] <- mean(pred.error.all, na.rm=TRUE)
+        
+        qplot(true.change.all, pred.change.all, xlab = "True change in suitability", ylab = "Predicted change in suitability")
+        preds.df <- cbind(true.change.all, pred.change.all)
+        preds.df <- preds.df[complete.cases(preds.df),]
+        pred.cor.all <- cor(preds.df, method = "spearman")[1,2]
+        this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], "pred.cor.all"] <- mean(pred.cor.all, na.rm=TRUE)
+        
+        print("Same plots, but restricted to current occurrences only")
+        
+        true.change.occ <- getValues(prediction.error[[1]] * pointraster)
+        qplot(true.change.occ, main = "True change in habitat suitability")
+        this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], "true.change.occ"] <- mean(true.change.occ, na.rm=TRUE)
+        
+        this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], "true.cells.declining.occ"] <- sum(getValues(prediction.error[[1]] * pointraster) < 0, na.rm=TRUE)
+        
+        this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], "pred.cells.declining.occ"] <- sum(getValues(prediction.error[[2]] * pointraster) < 0, na.rm=TRUE)
+        
+        this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], "prop.agreed.declining.occ"] <- sum(getValues(prediction.error[[2]] * pointraster) < 0 & getValues(prediction.error[[1]] * pointraster) < 0, na.rm=TRUE)/sum(getValues(prediction.error[[2]] * pointraster) < 0 | getValues(prediction.error[[1]] * pointraster) < 0, na.rm=TRUE)
+        
+        pred.change.occ <- getValues(prediction.error[[2]] * pointraster)
+        qplot(pred.change.occ, main = "Predicted change in habitat suitability")
+        this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], "pred.change.occ"] <- mean(pred.change.occ, na.rm=TRUE)
+        
+        pred.error.occ <- getValues(prediction.error[[2]] * pointraster - prediction.error[[1]] * pointraster) 
+        qplot(pred.error.occ, main = "Prediction error")
+        this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], "pred.error.occ"] <- mean(pred.error.occ, na.rm=TRUE)
+        
+        qplot(true.change.occ, pred.change.occ, xlab = "True change in suitability", ylab = "Predicted change in suitability")
+        preds.df <- cbind(true.change.occ, pred.change.occ)
+        preds.df <- preds.df[complete.cases(preds.df),]
+        pred.cor.occ <- cor(preds.df, method = "spearman")[1,2]
+        this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], "pred.cor.occ"] <- mean(pred.cor.occ, na.rm=TRUE)
+        
+        print(this.df[this.df$model == models[i] & this.df$projection.layers == proj.layers[j], ])
+        
+      }
+    }
+    write.csv(this.df, outfile)
+  }
+  return(this.df)
+}
+
+
+out.df <- project.and.report(sims[1])
+
+
+for(k in 2:length(sims)){
+  print(sims[k])
+  this.result <- project.and.report(sims[k])
+  if(ncol(this.result) == ncol(out.df)){
+    out.df <- rbind(out.df,  this.result)  
+  }
+}
+```

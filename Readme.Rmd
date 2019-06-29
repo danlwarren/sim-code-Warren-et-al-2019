@@ -1,0 +1,29 @@
+---
+title: "Readme"
+author: "Dan Warren"
+date: "6/29/2019"
+output: html_document
+---
+
+# Running the code
+
+The files contained in this directory are the source code files for the simulations used in Warren et al. 2019, "Evaluating species distribution models with discrimination accuracy is uninformative for many applications".  You can find a preprint version of that manuscript on biorXiv at [https://www.biorxiv.org/content/10.1101/684399v1](https://www.biorxiv.org/content/10.1101/684399v1).
+
+In this study we examine the link between discrimination accuracy on occurrence data and our ability to estimate species' environmental tolerances.  We found that, under a broad range of simulation conditions, discrimination accuracy has little useful information for model selection when the goal is to estimate the niche.  We used four sets of simulation conditions.
+
+1.	High complexity:  Artificial niches were generated using three randomly chosen variables and models were constructed using all nineteen bioclimatic variables.  Background data were drawn from 100 km circular buffers around occurrence points.  In the simulation files, these are the files with names including "regback".
+2.	Geographic partitioning: Same conditions as (1) but presence and background points for each species were split into four quadrants using ENMEval (Muscarella, Galante et al. 2014).   Presence and background data from one randomly selected quadrant were withheld for model evaluation.  In the simulation files, these are the files with names including "block".
+3.	Large background: Same conditions as (1), but background data were drawn from 1000 km circular buffers around occurrence points.  In the simulation files, these are the files with names including "hugeback".
+4.	Low complexity:  Niches were based on two randomly chosen variables and models were built using those two variables plus two more chosen at random.  In the simulation files, these are the files with names including "simple".
+
+Note that there are three files associated with running each set of simulations.  One is an .Rmd file, where the actual simulations are run.  One is the "sim.logistic.\*" file, which is just a short snippet of code that is called to knit the .Rmd file for each replicate, and the third is "run.logistic.\*", which loads in the environmental data and executes the other two files.  
+
+Each set of sims requires a specific output directory, which you'll need to create to run them.  We've preserved the skeleton of one such directory ("logistic sims")  here, with the output of the summary file and some .Rmd files that do the post-simulation analysis.  Unfortunately, the actual outputs of the simulations (and even some of the summary files) are considerably too large for GitHub, so if you want to examine the outputs your options are either to run them yourself or contact me (dan.l.warren@gmail.com) and we'll figure out some way to share the entire thing.  It's about 40GB so it's not entirely trivial.
+
+Assuming you do want to re-run an entire set of sims locally, here are the steps you'd need.
+
+1. Download CliMond climate rasters for present and future scenarios.
+2. Create output directory for simulation set.
+3. Change directory names in your run.\* and sim.\* files to match your actual file locations.
+4. Run all of the code in run.\*.
+5. Copy sim_results.Rmd, project_and_report.Rmd, and summarize_projections.Rmd to your output directory, and run them in that order.  You may need to change some directory names in those files in order to get them to run correctly.
